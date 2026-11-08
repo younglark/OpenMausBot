@@ -72,6 +72,7 @@ function windowsKnownDirs(): string[] {
     join(home, "go", "bin"),
     join(programFiles, "Docker", "Docker", "resources", "bin"), // Docker Desktop installer
     join(programFiles, "RedHat", "Podman"), // Podman installer, also run by Podman Desktop
+    join(programFiles, "WSL"), // wslc.exe / container.exe (WSL Containers, built into Windows)
   ];
 }
 

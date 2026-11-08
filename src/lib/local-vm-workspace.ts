@@ -15,7 +15,7 @@ export interface LocalVmWorkspaceStatus {
   maxInstances: number;
   container: "running" | "stopped" | "missing" | "unknown";
   network: "loopback" | "unsafe" | "unknown";
-  security: "hardened" | "unsafe" | "unknown";
+  security: "hardened" | "relaxed" | "unsafe" | "unknown";
   persistence: "durable" | "unsafe" | "unknown";
   desktopReady: boolean;
   ready: boolean;
@@ -166,7 +166,7 @@ const localVmStatusPayloadSchema = z.object({
   max_instances: z.number().int().positive().optional(),
   container: z.enum(["running", "stopped", "missing"]).optional(),
   network: z.enum(["loopback", "unsafe", "unknown"]).optional(),
-  security: z.enum(["hardened", "unsafe", "unknown"]).optional(),
+  security: z.enum(["hardened", "relaxed", "unsafe", "unknown"]).optional(),
   persistence: z.enum(["durable", "unsafe", "unknown"]).optional(),
   desktopReady: z.boolean().optional(),
   ready: z.boolean().optional(),
@@ -192,7 +192,7 @@ export function sanitizeLocalVmWorkspaceStatus(raw: JsonValue): LocalVmWorkspace
     value?.ready === true &&
       container === "running" &&
       network === "loopback" &&
-      security === "hardened" &&
+      (security === "hardened" || security === "relaxed") &&
       persistence === "durable" &&
       desktopReady,
   );

@@ -36,7 +36,7 @@ interface Status {
   managed: boolean;
   container: "running" | "stopped" | "missing";
   network: "loopback" | "unsafe" | "unknown";
-  security: "hardened" | "unsafe" | "unknown";
+  security: "hardened" | "relaxed" | "unsafe" | "unknown";
   persistence: "durable" | "unsafe" | "unknown";
   desktopReady: boolean;
   ready: boolean;
@@ -1310,11 +1310,11 @@ export function LocalComputerSection() {
 
       <Card title={t("vm.setup.title")} subtitle={t("vm.setup.subtitle")}>
         <div className="flex flex-col gap-4">
-          <Step n={1} title={t("vm.setup.step1")} done={Boolean(status?.runtime)}>
+          <Step n={1} title={status?.runtime === "wslc" ? t("vm.setup.step1Wslc") : t("vm.setup.step1")} done={Boolean(status?.runtime)}>
             <div className="text-[13px] leading-relaxed text-ink-secondary">
-              {t("vm.setup.step1Detail")}
+              {status?.runtime === "wslc" ? t("vm.setup.wslcBuiltIn") : t("vm.setup.step1Detail")}
             </div>
-            {c?.install ? (
+            {status?.runtime === "wslc" ? null : c?.install ? (
               <CommandLine command={c.install} />
             ) : (
               <a href="https://podman.io/docs/installation" target="_blank" rel="noreferrer" className="text-[13px] text-accent hover:underline">
@@ -1326,13 +1326,24 @@ export function LocalComputerSection() {
           <Step
             n={2}
             title={
-              status?.runtime && !status.daemonUp
-                ? t("vm.setup.step2Open", { runtime: status.runtime })
-                : t("vm.setup.step2")
+              status?.runtime === "wslc"
+                ? t("vm.setup.step2Wslc")
+                : status?.runtime && !status.daemonUp
+                  ? t("vm.setup.step2Open", { runtime: status.runtime })
+                  : t("vm.setup.step2")
             }
             done={Boolean(status?.daemonUp)}
           >
-            {!status?.runtime ? null : c?.runtimeStart ? (
+            {!status?.runtime ? null : status.runtime === "wslc" ? (
+              status.daemonUp ? (
+                <div className="text-[13px] text-ink-secondary">{t("vm.setup.wslcSession")}</div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <div className="text-[13px] text-ink-secondary">{t("vm.setup.wslcSessionStart")}</div>
+                  {c?.runtimeStart && <CommandLine command={c.runtimeStart} />}
+                </div>
+              )
+            ) : c?.runtimeStart ? (
               <CommandLine command={c.runtimeStart} />
             ) : (
               <div className="text-[13px] text-ink-secondary">{t("vm.setup.step2Detail")}</div>
@@ -1345,6 +1356,10 @@ export function LocalComputerSection() {
             )}
             {c?.pull && <details className="text-[12px] text-ink-secondary"><summary className="cursor-pointer">{t("vm.setup.showPull")}</summary><div className="mt-2"><CommandLine command={c.pull} /></div></details>}
           </Step>
+
+          {status?.security === "relaxed" && (
+            <p className="text-[12px] leading-relaxed text-warning">{t("vm.security.relaxed")}</p>
+          )}
 
           <Step
             n={4}

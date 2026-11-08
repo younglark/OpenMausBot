@@ -45,8 +45,21 @@ export const DISPLAY = ":1";
 export const CUA_SOCKET = "/run/user/1000/openmausbot-cua.sock";
 export const CUA_EXECUTABLE = "/usr/local/libexec/openmausbot/cua-driver";
 
-const RUNTIMES = ["docker", "podman", "container"] as const;
+const RUNTIMES = ["docker", "podman", "container", "wslc"] as const;
 export type Runtime = (typeof RUNTIMES)[number];
+
+/** wslc is strictly opt-in. All containers in one wslc session share a single WSL VM kernel
+ * (verified: identical boot_id, one system session); each still has its own PID/network/mount
+ * namespace, Docker's default capability set and a seccomp filter. But wslc accepts none of the
+ * hardening flags and exposes no HostConfig evidence, so the 12-point dockerSecurityIsHardened()
+ * contract can be neither configured nor machine-verified here.
+ * Turning it on deliberately trades that auditable contract for a working Windows backend;
+ * the status therefore reports "relaxed" (only when wslcSecurityIsAcceptable() passes) and the UI
+ * says so, never "hardened". */
+export const WSLC_COMPUTERS_ENV = "OMB_WSLC_COMPUTERS";
+export function wslcComputersEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[WSLC_COMPUTERS_ENV] === "1";
+}
 export type LifecycleAction = "pull" | "run" | "start" | "stop" | "remove";
 
 const INTERNAL_VIEWER_PORT = 6901;
@@ -218,11 +231,15 @@ export interface ContainerRuntimeStatus {
 export async function containerRuntimeStatus(
   runner: CommandRunner = sh,
   platform: NodeJS.Platform = process.platform,
+  options: { wslcEnabled?: boolean } = {},
 ): Promise<ContainerRuntimeStatus> {
+  const wslcEnabled = options.wslcEnabled ?? wslcComputersEnabled();
   // Podman is the supported Windows VM lane and owns the pinned image; Docker-first would pick an unrelated image store.
+  // wslc only joins when explicitly enabled, and then leads: an installed-but-idle Docker must not shadow it.
   const candidates: Runtime[] = platform === "win32"
-    ? ["podman", "docker"]
-    : RUNTIMES.filter((runtime) => runtime !== "container" || platform === "darwin");
+    ? (wslcEnabled ? ["wslc", "podman", "docker"] : ["podman", "docker"])
+    : RUNTIMES.filter((runtime) =>
+      (runtime !== "container" || platform === "darwin") && runtime !== "wslc");
   const present = await Promise.all(candidates.map((runtime) => installed(runtime, runner, platform)));
   const available = candidates.filter((_, index) => present[index]);
   const healthy = await Promise.all(
@@ -230,7 +247,7 @@ export async function containerRuntimeStatus(
       try {
         const infoArgs = candidate === "container"
           ? ["system", "status"]
-          : candidate === "podman"
+          : candidate === "podman" || candidate === "wslc"
             ? ["info", "--format", "json"]
             : ["info", "--format", "{{.ServerVersion}}"];
         await runner(
@@ -262,7 +279,9 @@ export interface ContainerComputerStatus {
   managed: boolean;
   container: "running" | "stopped" | "missing";
   network: "loopback" | "unsafe" | "unknown";
-  security: "hardened" | "unsafe" | "unknown";
+  /** "relaxed" is the visible, opt-in wslc downgrade: a shared session VM kernel with wslc's own
+   * default caps/seccomp, no configurable hardening contract, and only a minimal evidence check. */
+  security: "hardened" | "relaxed" | "unsafe" | "unknown";
   persistence: "durable" | "unsafe" | "unknown";
   desktopReady: boolean;
   desktop_error: string | null;
@@ -326,13 +345,19 @@ export function localVmRecreatableOnDemand(
     && status.create_supported;
 }
 
+/** Only a real failure blocks a VM: "relaxed" is an opt-in, clearly labelled downgrade that
+ * still has to pass wslcSecurityIsAcceptable() before it is reported. */
+function securityAllowsAttach(security: ContainerComputerStatus["security"]): boolean {
+  return security === "hardened" || security === "relaxed";
+}
+
 /** Fails closed on fields a partial inspect left "unknown", which `statusProblem` alone would let through. */
 export function localVmResumable(
   status: ContainerComputerStatus,
 ): status is ContainerComputerStatus & { runtime: Runtime } {
   return Boolean(status.runtime) && status.daemonUp && status.image && status.container === "stopped"
     && existingContainerProblem(status) === null
-    && status.network === "loopback" && status.security === "hardened" && status.persistence === "durable";
+    && status.network === "loopback" && securityAllowsAttach(status.security) && status.persistence === "durable";
 }
 
 export function localVmWakeAction(status: ContainerComputerStatus): "run" | "start" | null {
@@ -348,7 +373,9 @@ export function autoLocalVmAttachable(status: ContainerComputerStatus): boolean 
 
 function statusProblem(status: ContainerComputerStatus): string | null {
   if (!status.runtime) return "Install a supported container runtime first";
-  if (!status.daemonUp) return `Start ${status.runtime} first`;
+  if (!status.daemonUp) return status.runtime === "wslc"
+    ? "WSL Containers is not ready; enable the Windows feature, run a container once, then refresh"
+    : `Start ${status.runtime} first`;
   if (!status.image) return `Prepare the Cua desktop image with Driver ${CUA_DRIVER_VERSION}`;
   if (status.container === "missing" && !status.create_supported) {
     return "Per-bot Local VMs require Docker or Podman because Apple container requires a fixed host port";
@@ -468,10 +495,10 @@ export async function containerComputerStatus(
   runner: CommandRunner = sh,
   platform: NodeJS.Platform = process.platform,
   target: LocalVmTarget = SHARED_LOCAL_VM_TARGET,
-  options: { probeDesktop?: boolean } = {},
+  options: { probeDesktop?: boolean; wslcEnabled?: boolean } = {},
 ): Promise<ContainerComputerStatus> {
   const status = emptyStatus(platform, target);
-  const runtimeStatus = await containerRuntimeStatus(runner, platform);
+  const runtimeStatus = await containerRuntimeStatus(runner, platform, { wslcEnabled: options.wslcEnabled });
   status.available = runtimeStatus.available;
   status.runtime = runtimeStatus.runtime;
   status.daemonUp = runtimeStatus.daemonUp;
@@ -530,6 +557,7 @@ export async function containerComputerStatus(
         Config?: { Image?: string; Labels?: Record<string, string>; Env?: string[] };
         HostConfig?: DockerHardeningConfig & {
           PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null>;
+          NetworkMode?: string;
         };
         NetworkSettings?: {
           Ports?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null>;
@@ -539,35 +567,56 @@ export async function containerComputerStatus(
           Source?: string;
           Destination?: string;
           RW?: boolean;
+          ReadWrite?: boolean;
         }>;
+        /** wslc publishes bindings at the top level instead of HostConfig.PortBindings. */
+        Ports?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null>;
         EffectiveCaps?: string[];
         BoundingCaps?: string[];
         State?: { Running?: boolean; FinishedAt?: string };
         Image?: string;
       }>;
       const detail = inspected[0];
+      // wslc 3.0.3.0 inspect exposes top-level Ports (identical shape to Docker's PortBindings)
+      // and Mounts.ReadWrite instead of RW. Normalize once so the shared checks stay untouched.
+      const wslc = status.runtime === "wslc";
+      const portBindings = wslc ? detail?.Ports : detail?.HostConfig?.PortBindings;
+      const viewerBindings = wslc ? detail?.Ports : detail?.NetworkSettings?.Ports;
+      const mounts = wslc
+        ? detail?.Mounts?.map((mount) => ({ ...mount, RW: mount.ReadWrite ?? mount.RW }))
+        : detail?.Mounts;
       status.container = detail?.State?.Running ? "running" : "stopped";
       status.stopped_at = status.container === "stopped" ? detail?.State?.FinishedAt ?? null : null;
-      status.network = dockerPortsAreLocal(detail?.HostConfig?.PortBindings) ? "loopback" : "unsafe";
-      status.viewer_port = dockerViewerPort(detail?.NetworkSettings?.Ports, target.viewerPort);
+      status.network = dockerPortsAreLocal(portBindings) ? "loopback" : "unsafe";
+      status.viewer_port = dockerViewerPort(viewerBindings, target.viewerPort);
       status.imageMatches =
         detail?.Config?.Image === IMAGE &&
         imageLabelsMatch(detail?.Config?.Labels) &&
         status.image_id !== null &&
         normalizeImageId(detail?.Image) === status.image_id;
       status.managed = containerOwnershipLabelsMatch(detail?.Config?.Labels, target);
-      if (status.managed) raisePidsLimit(target.containerName, detail?.HostConfig?.PidsLimit, runner.bind(null, status.runtime));
+      // wslc has no `update --pids-limit`, and its HostConfig never carries PidsLimit at all.
+      if (status.managed && !wslc) raisePidsLimit(target.containerName, detail?.HostConfig?.PidsLimit, runner.bind(null, status.runtime));
       status.persistence = dockerWorkspaceMountIsSafe(
-        detail?.Mounts,
+        mounts,
         platform,
         target.workspaceDir,
         status.runtime,
       ) ? "durable" : "unsafe";
-      status.security = (
-        status.runtime === "podman"
+      // Never claim "hardened": wslc applies its own default caps/seccomp but exposes no
+      // HostConfig evidence for the 12-point contract. "relaxed" is earned from the few fields
+      // wslc does report, so a container with a public port, a host namespace or a read-only
+      // mount still lands on "unsafe" and gets the recreate prompt.
+      if (wslc) {
+        status.security = wslcSecurityIsAcceptable(detail, platform, target.workspaceDir)
+          ? "relaxed"
+          : "unsafe";
+      } else {
+        const hardened = status.runtime === "podman"
           ? podmanSecurityIsHardened(detail?.HostConfig, detail?.EffectiveCaps, detail?.BoundingCaps)
-          : dockerSecurityIsHardened(detail?.HostConfig)
-      ) ? "hardened" : "unsafe";
+          : dockerSecurityIsHardened(detail?.HostConfig);
+        status.security = hardened ? "hardened" : "unsafe";
+      }
       status.viewer_url = viewerUrl(viewerPassword(detail?.Config?.Env), status.viewer_port);
     }
   } catch {
@@ -578,7 +627,7 @@ export async function containerComputerStatus(
     status.imageMatches &&
     status.managed &&
     status.network === "loopback" &&
-    status.security === "hardened" &&
+    securityAllowsAttach(status.security) &&
     status.persistence === "durable";
   if (canProbe) {
     try {
@@ -822,6 +871,53 @@ export function podmanSecurityIsHardened(
   }, { podmanBrowserSandbox: true });
 }
 
+/** The shape wslc 3.0.3.0 inspect actually returns: Docker-shaped, but with top-level Ports,
+ * Mounts.ReadWrite and a four-field HostConfig. */
+export interface WslcInspectDetail {
+  Config?: { Image?: string; Labels?: Record<string, string>; Env?: string[] };
+  HostConfig?: DockerHardeningConfig & { NetworkMode?: string };
+  Ports?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null>;
+  Mounts?: Array<{
+    Type?: string;
+    Source?: string;
+    Destination?: string;
+    RW?: boolean;
+    ReadWrite?: boolean;
+  }>;
+  State?: { Running?: boolean; FinishedAt?: string };
+  Image?: string;
+}
+
+const WSLC_CPUS_NANO = 2 * 1_000_000_000;
+
+/** wslc cannot produce the 12-field Docker hardening contract, but its inspect still carries
+ * enough positive evidence to reject a container we did not create. "relaxed" is a conclusion
+ * drawn from those fields, not a synonym for the runtime name. Missing evidence fails closed. */
+export function wslcSecurityIsAcceptable(
+  detail: WslcInspectDetail | undefined,
+  platform: NodeJS.Platform,
+  expectedWorkspace: string,
+): boolean {
+  const host = detail?.HostConfig;
+  if (!host) return false;
+  // Require the bridge network by value: wslc refuses --network host, and an absent field is not proof.
+  if (host.NetworkMode !== "bridge") return false;
+  // Reject explicit escapes too, in case a future wslc starts accepting these flags.
+  if (host.Privileged === true || host.PidMode || host.IpcMode === "host" || host.UTSMode === "host") return false;
+  if (host.Devices?.length || host.DeviceRequests?.length) return false;
+  if ((host.SecurityOpt ?? []).some((option) => /(?:^|=)(?:unconfined|disable)$/i.test(option))) return false;
+  // containerRunArgs() asks for 4 GiB / 2 CPUs; when wslc reports them they must be honoured.
+  if (host.Memory !== undefined && host.Memory < MEMORY_BYTES) return false;
+  if (host.NanoCpus !== undefined && host.NanoCpus < WSLC_CPUS_NANO) return false;
+  // The viewer must exist and be the only publication, bound to loopback.
+  if (!dockerPortsAreLocal(detail?.Ports)) return false;
+  // Exactly one writable workspace bind. ReadWrite is wslc's spelling of Docker's RW; a missing
+  // flag is not evidence of a writable mount.
+  const mounts = detail?.Mounts?.map((mount) => ({ ...mount, RW: mount.ReadWrite ?? mount.RW }));
+  if (!dockerWorkspaceMountIsSafe(mounts, platform, expectedWorkspace, "wslc")) return false;
+  return mounts?.[0]?.RW === true;
+}
+
 export function containerRunArgs(
   runtime: Runtime,
   password = "CHANGE_ME",
@@ -849,7 +945,12 @@ export function containerRunArgs(
     "--label",
     `${TARGET_LABEL}=${target.label}`,
   );
-  if (runtime === "container") {
+  if (runtime === "wslc") {
+    // wslc 3.0.3.0 rejects --cap-drop / --cap-add / --pids-limit / --ipc / --cgroupns /
+    // --memory-swap / --security-opt (verified: "option name not recognized"). Its WSL session
+    // VM replaces the capability contract, so send only the resource limits it accepts.
+    common.push("--memory", "4g", "--cpus", "2", "--shm-size", "512m");
+  } else if (runtime === "container") {
     // Apple container already places each Linux container in a lightweight VM.
     common.push(
       "--memory",
@@ -923,7 +1024,7 @@ async function prepareManagedImage(runtime: Runtime, runner: CommandRunner): Pro
   const context = await mkdtemp(join(tmpdir(), "openmausbot-cua-image-"));
   try {
     await writeFile(join(context, "Dockerfile"), managedImageDockerfile(), { mode: 0o600 });
-    await runner(runtime, ["build", ...(runtime === "container" ? [] : ["--force-rm"]), "-t", IMAGE, context], 10 * 60_000); // the legacy builder keeps a failed step's container without --force-rm
+    await runner(runtime, ["build", ...(runtime === "container" || runtime === "wslc" ? [] : ["--force-rm"]), "-t", IMAGE, context], 10 * 60_000); // the legacy builder keeps a failed step's container without --force-rm
   } finally {
     await rm(context, { recursive: true, force: true });
   }
@@ -934,9 +1035,10 @@ export async function containerComputerAction(
   runner: CommandRunner = sh,
   platform: NodeJS.Platform = process.platform,
   target: LocalVmTarget = SHARED_LOCAL_VM_TARGET,
+  options: { wslcEnabled?: boolean } = {},
 ): Promise<ContainerComputerStatus> {
   if (runner === sh && platform === process.platform) screenshotStatusCache.delete(target.key);
-  const before = await containerComputerStatus(runner, platform, target);
+  const before = await containerComputerStatus(runner, platform, target, options);
   const runtime = before.runtime;
   if (!runtime) throw Object.assign(new Error(before.problem ?? "No container runtime is installed"), { status: 409 });
   if (!before.daemonUp) throw Object.assign(new Error(before.problem ?? `${runtime} is not running`), { status: 409 });
@@ -978,7 +1080,7 @@ export async function containerComputerAction(
           : [action, target.containerName];
     await runner(runtime, args, 2 * 60_000);
   }
-  return containerComputerStatus(runner, platform, target);
+  return containerComputerStatus(runner, platform, target, options);
 }
 
 export async function containerComputerExists(
@@ -1179,14 +1281,21 @@ export function setupCommands(
   platform: NodeJS.Platform = process.platform,
   target: LocalVmTarget = SHARED_LOCAL_VM_TARGET,
 ) {
-  const install =
-    platform === "darwin"
+  // wslc ships with Windows. Showing the Podman Desktop installer here would tell users to
+  // install a runtime they do not need, which would then shadow wslc in the candidate list.
+  const install = runtime === "wslc"
+    ? null
+    : platform === "darwin"
       ? "brew install podman; podman machine init; podman machine start"
       : platform === "win32"
         ? "winget install -e --id RedHat.Podman-Desktop"
         : null;
+  // wslc has no daemon to start; this is the same health probe containerRuntimeStatus() uses,
+  // so Step 2 always has something actionable when the session is not ready yet.
   const runtimeStart =
-    runtime === "container"
+    runtime === "wslc"
+      ? "wslc info --format json"
+      : runtime === "container"
       ? "container system start"
       : runtime === "podman" && platform !== "linux"
         ? "podman machine init; podman machine start"
