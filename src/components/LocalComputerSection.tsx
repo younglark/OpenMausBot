@@ -16,6 +16,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Card, CommandLine } from "./SettingsPrimitives";
+import { Step, WslcSecurityNotice } from "./LocalVmSetupPrimitives";
 import { MacLocalControl } from "./MacLocalControl";
 import { Select } from "./Select";
 import { cn } from "@/lib/cn";
@@ -608,25 +609,6 @@ export function LocalVmInventoryCard({
         })}
       </div>
     </Card>
-  );
-}
-
-function Step({ n, title, done, children }: { n: number; title: string; done: boolean; children?: React.ReactNode }) {
-  return (
-    <div className="flex gap-3">
-      <div
-        className={cn(
-          "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-[11px]",
-          done ? "bg-success/20 text-success" : "border border-hairline/50 text-ink-secondary",
-        )}
-      >
-        {done ? <Check size={12} /> : n}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className={cn("text-[14px]", done ? "text-ink-secondary line-through" : "text-ink")}>{title}</div>
-        {!done && children && <div className="mt-2 flex flex-col items-start gap-2 [&>*]:max-w-full">{children}</div>}
-      </div>
-    </div>
   );
 }
 
@@ -1357,9 +1339,7 @@ export function LocalComputerSection() {
             {c?.pull && <details className="text-[12px] text-ink-secondary"><summary className="cursor-pointer">{t("vm.setup.showPull")}</summary><div className="mt-2"><CommandLine command={c.pull} /></div></details>}
           </Step>
 
-          {status?.security === "relaxed" && (
-            <p className="text-[12px] leading-relaxed text-warning">{t("vm.security.relaxed")}</p>
-          )}
+          {status?.security === "relaxed" && <WslcSecurityNotice />}
 
           <Step
             n={4}

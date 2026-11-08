@@ -149,7 +149,8 @@ only `Memory`, `NanoCpus`, `NetworkMode` and `Ulimits`. The 12-point
 machine-verified.
 
 `security: "relaxed"` is **earned, not assumed**: `wslcSecurityIsAcceptable()`
-requires the four-field `HostConfig` with `NetworkMode === "bridge"`, no
+in `server/container-security.ts` (the shared isolation helpers live there so
+the size-ratcheted `container-computer.ts` does not grow) requires the four-field `HostConfig` with `NetworkMode === "bridge"`, no
 privileged/host-namespace/device escapes, honouring the requested 4 GiB / 2 CPU
 limits when reported, exactly one loopback viewer publication, and exactly one
 writable workspace bind with an explicit `ReadWrite`/`RW === true`. Missing

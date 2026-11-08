@@ -43,7 +43,7 @@ function stdioRoundTrip(args, input) {
   });
 }
 
-// Mirrors the readers in server/container-computer.ts (dockerSecurityIsHardened,
+// Mirrors the readers in server/container-security.ts (dockerSecurityIsHardened,
 // dockerPortsAreLocal, dockerWorkspaceMountIsSafe, wslcSecurityIsAcceptable). Kept inline so
 // this probe runs on stock Node with no pnpm install.
 function dockerSecurityIsHardened(config) {
