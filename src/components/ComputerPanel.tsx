@@ -99,7 +99,7 @@ interface LocalVmStatus {
   imageMatches: boolean;
   managed: boolean;
   network: "loopback" | "unsafe" | "unknown";
-  security: "hardened" | "unsafe" | "unknown";
+  security: "hardened" | "relaxed" | "unsafe" | "unknown";
   persistence: "durable" | "unsafe" | "unknown";
   desktopReady: boolean;
   ready: boolean;
@@ -431,7 +431,7 @@ export function ComputerPanel({
             status.imageMatches &&
             status.managed &&
             status.network === "loopback" &&
-            status.security === "hardened" &&
+            (status.security === "hardened" || status.security === "relaxed") &&
             status.persistence === "durable" &&
             !status.desktopReady &&
             vmReadinessAttempts.current < 15

@@ -120,3 +120,69 @@ Cross-process lease contention (two app processes, one environment) is
 covered by `electron/data-dir-lease.node-test.mjs`, not this recipe. This
 recipe does not cover Forget's delete-files choice, Windows/Linux paths, or
 the packaged build matrix.
+
+## wslc (WSL Containers) Local VM — opt-in, reduced isolation
+
+`OMB_WSLC_COMPUTERS=1` adds `wslc.exe` as a Windows Local VM runtime and
+prefers it over Docker/Podman. Without the variable the runtime list is
+unchanged, so existing installs are unaffected. wslc is built into Windows, so
+the setup card offers no Podman Desktop installer when it is the detected
+runtime; Step 2 shows the `wslc info --format json` health probe only when the
+session is not ready (sessions are created on first use).
+
+The switch is env-only, unlike `agentsToolBridge`'s config + env layering.
+That is a deliberate scope call: threading a config object through every
+`containerComputerStatus()` caller would widen the options surface this
+runtime already depends on. A Settings toggle should be added later together
+with that refactor, not bolted onto the env read.
+
+This is a deliberate security downgrade, and the reason is **verifiability**,
+not a total absence of protection. Measured on wslc 3.0.3.0: containers in one
+session share a single WSL VM kernel (identical `boot_id`, one
+`system session`), while each container still has its own PID namespace,
+Docker's default capability set (`CapEff=00000000a80425fb`) and a seccomp
+filter (`Seccomp: 2`); no host filesystem is auto-mounted. But wslc rejects
+`--cap-drop`, `--cap-add`, `--pids-limit`, `--ipc`, `--cgroupns`,
+`--memory-swap` and `--security-opt`, and its `inspect` `HostConfig` exposes
+only `Memory`, `NanoCpus`, `NetworkMode` and `Ulimits`. The 12-point
+`dockerSecurityIsHardened()` contract can therefore be neither configured nor
+machine-verified.
+
+`security: "relaxed"` is **earned, not assumed**: `wslcSecurityIsAcceptable()`
+requires the four-field `HostConfig` with `NetworkMode === "bridge"`, no
+privileged/host-namespace/device escapes, honouring the requested 4 GiB / 2 CPU
+limits when reported, exactly one loopback viewer publication, and exactly one
+writable workspace bind with an explicit `ReadWrite`/`RW === true`. Missing
+evidence or a public port falls to `"unsafe"` and gets the recreate prompt.
+The Settings card shows a warning; `hardened` is never reported.
+
+Two accepted consequences: there is **no PID limit** (`--pids-limit` is
+rejected and `raisePidsLimit` is skipped), so a fork bomb can exhaust the
+shared session VM; and because `build --force-rm` is unsupported, a failed
+managed-image build can leave intermediate containers that must be removed by
+hand. Bind-mounting the Windows workspace remains a deliberate path from the
+container to the host. Only enable this on a machine you trust.
+
+Verified against wslc 3.0.3.0 on Windows 10 Pro 26H2 (build 26300):
+
+- `inspect` / `image inspect` emit Docker-shaped JSON by default; no
+  `--format` is needed for those calls, but `info` needs `--format json`.
+- Published ports live at top-level `Ports` with the same shape as Docker's
+  `HostConfig.PortBindings`; `127.0.0.1:` bindings are honoured.
+- `Mounts` uses `ReadWrite`, not `RW`; Windows bind sources round-trip.
+- `run` accepts `--memory --cpus --shm-size --label --mount -e -p`, `pull`
+  accepts digest pins, and `build` accepts `FROM/LABEL/USER/RUN` but not
+  `--force-rm`.
+- `exec -i -u -e`, `rm -f`, `rmi`, `start` and `stop` work.
+- `scripts/poc-wslc.mjs` recreates the production `run` flags and records
+  `minimalEvidencePass`, `mountRwEvidence` and `portsAreLocal` from a real
+  inspect; `scripts/poc-wslc-isolation.mjs` records the isolation probe
+  (shared kernel `boot_id`, PID-namespace marker, capabilities, seccomp).
+  Both write to the OS temp dir by default (`POC_OUT` overrides) and remove
+  only the containers they create.
+
+To verify: set the variable, restart the desktop app, then use Settings →
+Local computer → Prepare / Create. Confirm the reduced-isolation warning is
+visible and that `dockerSecurityIsHardened()` is never relied on for this
+runtime. `pnpm typecheck && pnpm test` must pass; see
+`server/container-computer.wslc.test.ts`.
