@@ -1,7 +1,7 @@
 import { z, type ZodString } from "zod";
 import * as boat from "../boat.ts";
 import type { ComputerControl } from "../computer-control.ts";
-import { isValidSshAlias, localVmMaxInstances, localVmMode, type AppConfig } from "../config.ts";
+import { isValidSshAlias, localVmMaxInstances, localVmMode, localVmWslcFields, type AppConfig } from "../config.ts";
 import {
   containerComputerAction,
   containerComputerExists,
@@ -324,6 +324,7 @@ export function createComputerRoutes(deps: ComputerRouteDeps): RouteHandler {
           idle_timeout_ms: localVmIdleMs(),
           mode: localVmMode(cfg),
           max_instances: localVmMaxInstances(cfg),
+          ...localVmWslcFields(cfg),
         });
       } finally {
         if (action === "pull") localVmImageBusy.set(false);
@@ -399,6 +400,7 @@ export function createComputerRoutes(deps: ComputerRouteDeps): RouteHandler {
           idle_timeout_ms: localVmIdleMs(),
           mode: localVmMode(cfg),
           max_instances: localVmMaxInstances(cfg),
+          ...localVmWslcFields(cfg),
         });
       } finally {
         if (action === "run") localVmProvisionBusy.set(false);

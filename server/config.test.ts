@@ -595,6 +595,8 @@ describe("configuration boundaries", () => {
     expect(parseConfigPatch({ localVm: { mode: "per-bot", maxInstances: 4 } })).toEqual({
       localVm: { mode: "per-bot", maxInstances: 4 },
     });
+    expect(parseConfigPatch({ localVm: { wslc: true } })).toEqual({ localVm: { wslc: true } });
+    expect(() => parseConfigPatch({ localVm: { wslc: "yes" } })).toThrow("localVm.wslc");
     expect(parseConfigPatch({ localVm: { maxInstances: 5 } })).toEqual({
       localVm: { maxInstances: 5 },
     });

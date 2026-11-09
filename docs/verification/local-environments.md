@@ -123,18 +123,21 @@ the packaged build matrix.
 
 ## wslc (WSL Containers) Local VM — opt-in, reduced isolation
 
-`OMB_WSLC_COMPUTERS=1` adds `wslc.exe` as a Windows Local VM runtime and
-prefers it over Docker/Podman. Without the variable the runtime list is
-unchanged, so existing installs are unaffected. wslc is built into Windows, so
-the setup card offers no Podman Desktop installer when it is the detected
-runtime; Step 2 shows the `wslc info --format json` health probe only when the
-session is not ready (sessions are created on first use).
+`localVm.wslc: true` in `config.json` adds `wslc.exe` as a Windows Local VM
+runtime and prefers it over Docker/Podman. Settings → Computer → Container
+runtime turns it on; `OMB_WSLC_COMPUTERS=1` or `=0` forces it on or off and
+overrides the saved switch, so the row is disabled while that variable is set.
+Without either the runtime list is unchanged, so existing installs are
+unaffected. wslc is built into Windows, so the setup card offers no Podman
+Desktop installer when it is the detected runtime; Step 2 shows the
+`wslc info --format json` health probe only when the session is not ready
+(sessions are created on first use).
 
-The switch is env-only, unlike `agentsToolBridge`'s config + env layering.
-That is a deliberate scope call: threading a config object through every
-`containerComputerStatus()` caller would widen the options surface this
-runtime already depends on. A Settings toggle should be added later together
-with that refactor, not bolted onto the env read.
+`wslcComputersEnabled(cfg, env)` layers the saved switch with the env override.
+When a caller passes no explicit `wslcEnabled` option, `containerRuntimeStatus()`
+resolves it from `loadConfig()`, so the existing call sites pick up the saved
+setting without threading a config object through each one. `localVmPayload()`
+reports `wslc_enabled` and `wslc_forced` for the settings row.
 
 This is a deliberate security downgrade, and the reason is **verifiability**,
 not a total absence of protection. Measured on wslc 3.0.3.0: containers in one
@@ -182,8 +185,8 @@ Verified against wslc 3.0.3.0 on Windows 10 Pro 26H2 (build 26300):
   Both write to the OS temp dir by default (`POC_OUT` overrides) and remove
   only the containers they create.
 
-To verify: set the variable, restart the desktop app, then use Settings →
-Local computer → Prepare / Create. Confirm the reduced-isolation warning is
-visible and that `dockerSecurityIsHardened()` is never relied on for this
-runtime. `pnpm typecheck && pnpm test` must pass; see
+To verify: turn on the switch, or set the variable before starting the app, then
+use Settings → Computer → Prepare / Create. Confirm the reduced-isolation
+warning is visible and that `dockerSecurityIsHardened()` is never relied on for
+this runtime. `pnpm typecheck && pnpm test` must pass; see
 `server/container-computer.wslc.test.ts`.

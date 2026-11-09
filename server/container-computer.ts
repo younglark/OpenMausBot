@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 
 import { augmentedPath, resolveCliSpawn } from "./env-path.ts";
 import { workspacePreparationDockerfile } from "./container-workspace.ts";
-import { DATA_DIR } from "./config.ts";
+import { DATA_DIR, loadConfig } from "./config.ts";
 import { PIDS_LIMIT, raisePidsLimit } from "./container-limits.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import {
@@ -244,7 +244,7 @@ export async function containerRuntimeStatus(
   platform: NodeJS.Platform = process.platform,
   options: { wslcEnabled?: boolean } = {},
 ): Promise<ContainerRuntimeStatus> {
-  const wslcEnabled = options.wslcEnabled ?? wslcComputersEnabled();
+  const wslcEnabled = options.wslcEnabled ?? wslcComputersEnabled(loadConfig());
   // Podman is the supported Windows VM lane and owns the pinned image; Docker-first would pick an unrelated image store.
   // wslc only joins when explicitly enabled, and then leads: an installed-but-idle Docker must not shadow it.
   const candidates: Runtime[] = platform === "win32"

@@ -16,7 +16,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { Card, CommandLine } from "./SettingsPrimitives";
-import { Step, WslcSecurityNotice } from "./LocalVmSetupPrimitives";
+import { ActionButton, Step, WslcSecurityNotice, type LocalVmAction as Action } from "./LocalVmSetupPrimitives";
+import { LocalVmRuntimeCard } from "./LocalVmRuntimeCard";
 import { MacLocalControl } from "./MacLocalControl";
 import { Select } from "./Select";
 import { cn } from "@/lib/cn";
@@ -24,8 +25,6 @@ import { localizeComputerProblem } from "@/lib/computer-messages";
 import { computerInventoryRequest, jsonPostRequest, type ComputerApiRequest } from "@/lib/computer-requests";
 import { useStore } from "@/state/store";
 import { VpsComputersCard } from "./VpsComputersCard"; import { KeysLink } from "./keys/KeysLink";
-
-type Action = "pull" | "run" | "start" | "stop" | "remove" | "recreate";
 
 interface Status {
   platform: string;
@@ -53,6 +52,7 @@ interface Status {
   stop_reason?: "idle" | null;
   mode: "shared" | "per-bot" | "pool";
   max_instances: number;
+  wslc_enabled: boolean; wslc_forced: boolean;
   commands: {
     install: string | null;
     runtimeStart: string | null;
@@ -612,35 +612,6 @@ export function LocalVmInventoryCard({
   );
 }
 
-function ActionButton({
-  action,
-  pending,
-  children,
-  onClick,
-  danger = false,
-}: {
-  action: Action;
-  pending: Action | null;
-  children: React.ReactNode;
-  onClick: () => void;
-  danger?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      aria-busy={pending === action}
-      disabled={pending !== null}
-      className={cn(
-        "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium disabled:opacity-50",
-        danger ? "bg-danger/15 text-danger hover:bg-danger/20" : "bg-accent text-white hover:brightness-110",
-      )}
-    >
-      {pending === action && <Loader2 size={13} className="animate-spin" />}
-      {children}
-    </button>
-  );
-}
-
 // Mirrors localVm.idleTimeoutMinutes in server/config.ts; the server is the authority.
 const MIN_LOCAL_VM_IDLE_TIMEOUT_MINUTES = 5;
 const MAX_LOCAL_VM_IDLE_TIMEOUT_MINUTES = 1_440;
@@ -1009,6 +980,11 @@ export function LocalComputerSection() {
     setStatus((current) => current ? { ...current, idle_timeout_ms: idleTimeoutMinutes * 60_000 } : current);
   };
 
+  const wslcSaved = (wslc: boolean) => {
+    setStatus((current) => current ? { ...current, wslc_enabled: wslc } : current);
+    void refresh();
+  };
+
   const deletePerBotVm = async (instance: LocalVmInventoryInstance) => {
     if (!instance.managed) {
       setInventoryError(t("vm.unmanagedError"));
@@ -1244,6 +1220,15 @@ export function LocalComputerSection() {
         </div>
         {error && <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
       </Card>
+
+      {status?.platform === "win32" && (
+        <LocalVmRuntimeCard
+          enabled={status.wslc_enabled === true}
+          forced={status.wslc_forced === true}
+          disabled={policyPending || pending !== null}
+          onSaved={wslcSaved}
+        />
+      )}
 
       <Card
         title={t("vm.isolation.title")}

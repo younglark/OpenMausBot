@@ -30,6 +30,7 @@ import {
   type LocalVmInventoryInstance,
   type VpsComputerInventoryInstance,
 } from "./LocalComputerSection";
+import { LocalVmWslcSetting } from "./LocalVmSetupPrimitives";
 import { computerInventoryRequest } from "@/lib/computer-requests";
 import { VpsComputersCard } from "./VpsComputersCard";
 
@@ -575,6 +576,33 @@ describe("Settings → Computers on an OMB Cloud home", () => {
     expect(titles).toContain("Cloud desktops");
     expect(titles).not.toContain("Private desktops");
     expect(titles).not.toContain("Setup");
+  });
+});
+
+describe("Local VM container runtime setting", () => {
+  it("renders an editable wslc switch with the reduced-isolation detail", () => {
+    const markup = renderToStaticMarkup(createElement(LocalVmWslcSetting, {
+      enabled: false,
+      forced: false,
+      disabled: false,
+      onSave: () => {},
+    }));
+    expect(markup).toContain('role="switch"');
+    expect(markup).toContain('aria-checked="false"');
+    expect(markup).toContain("Use WSL Containers (wslc)");
+    expect(markup).not.toContain('disabled=""');
+  });
+
+  it("shows the environment override and disables the switch", () => {
+    const markup = renderToStaticMarkup(createElement(LocalVmWslcSetting, {
+      enabled: true,
+      forced: true,
+      disabled: false,
+      onSave: () => {},
+    }));
+    expect(markup).toContain("OMB_WSLC_COMPUTERS");
+    expect(markup).toContain('disabled=""');
+    expect(markup).toContain('aria-checked="true"');
   });
 });
 

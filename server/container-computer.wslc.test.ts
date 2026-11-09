@@ -116,11 +116,14 @@ function fakeWslc(inspectJson = inspectWith()) {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("wslc opt-in switch", () => {
-  it("stays off unless the opt-in variable is exactly 1", () => {
+  it("reads localVm.wslc, with OMB_WSLC_COMPUTERS forcing either way", () => {
     expect(wslcComputersEnabled({})).toBe(false);
-    expect(wslcComputersEnabled({ [WSLC_COMPUTERS_ENV]: "0" })).toBe(false);
-    expect(wslcComputersEnabled({ [WSLC_COMPUTERS_ENV]: "yes" })).toBe(false);
-    expect(wslcComputersEnabled({ [WSLC_COMPUTERS_ENV]: "1" })).toBe(true);
+    expect(wslcComputersEnabled({ localVm: { wslc: true } })).toBe(true);
+    expect(wslcComputersEnabled({ localVm: { wslc: true } }, { [WSLC_COMPUTERS_ENV]: "0" })).toBe(false);
+    expect(wslcComputersEnabled({ localVm: { wslc: false } }, { [WSLC_COMPUTERS_ENV]: "1" })).toBe(true);
+    expect(wslcComputersEnabled({}, { [WSLC_COMPUTERS_ENV]: "0" })).toBe(false);
+    expect(wslcComputersEnabled({}, { [WSLC_COMPUTERS_ENV]: "yes" })).toBe(false);
+    expect(wslcComputersEnabled({}, { [WSLC_COMPUTERS_ENV]: "1" })).toBe(true);
   });
 
   it("does not enter the Windows runtime list when disabled", async () => {
@@ -145,7 +148,7 @@ describe("wslc opt-in switch", () => {
     expect(status.available).not.toContain("wslc");
   });
 
-  it("works through the production path, which passes no options and reads process.env", async () => {
+  it("works through the production path, which passes no options and reads the saved config", async () => {
     vi.stubEnv(WSLC_COMPUTERS_ENV, "1");
     const enabled = await containerComputerStatus(fakeWslc().run, "win32");
     expect(enabled.runtime).toBe("wslc");

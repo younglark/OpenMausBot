@@ -157,6 +157,7 @@ import {
   localVmMaxInstances,
   localVmMode,
   localVmPreservesInstalledApps,
+  localVmWslcFields,
   roomTurnTimeoutMinutes,
   mcpCallTimeoutMinutes,
   cacheKeepWarmSettings,
@@ -11674,8 +11675,7 @@ async function localVmPayload(target: LocalVmTarget, auth: RequestAuth) {
     stop_reason: localVmStopReason(target.key, status),
     commands: setupCommands(status.runtime, process.platform, target),
     idle_timeout_ms: localVmIdleMs(),
-    mode: localVmMode(cfg),
-    max_instances: localVmMaxInstances(cfg),
+    mode: localVmMode(cfg), max_instances: localVmMaxInstances(cfg), ...localVmWslcFields(cfg),
   };
 }
 

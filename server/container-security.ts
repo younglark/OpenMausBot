@@ -6,7 +6,8 @@ export const INTERNAL_VIEWER_PORT = 6901;
 export const MEMORY_BYTES = 4 * 1024 * 1024 * 1024;
 export const VM_WORKSPACE_GUEST = "/home/cua/workspace";
 
-/** wslc is strictly opt-in. All containers in one wslc session share a single WSL VM kernel
+/** wslc is strictly opt-in through `localVm.wslc` in config.json or OMB_WSLC_COMPUTERS, which
+ * forces it on ("1") or off ("0"). All containers in one wslc session share a single WSL VM kernel
  * (verified: identical boot_id, one system session); each still has its own PID/network/mount
  * namespace, Docker's default capability set and a seccomp filter. But wslc accepts none of the
  * hardening flags and exposes no HostConfig evidence, so the 12-point dockerSecurityIsHardened()
@@ -15,8 +16,16 @@ export const VM_WORKSPACE_GUEST = "/home/cua/workspace";
  * the status therefore reports "relaxed" (only when wslcSecurityIsAcceptable() passes) and the UI
  * says so, never "hardened". */
 export const WSLC_COMPUTERS_ENV = "OMB_WSLC_COMPUTERS";
-export function wslcComputersEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[WSLC_COMPUTERS_ENV] === "1";
+type WslcConfig = { localVm?: { wslc?: boolean } };
+
+/** Null when the variable is unset or not one of the two explicit values. */
+export function wslcComputersEnvValue(env: NodeJS.ProcessEnv = process.env): boolean | null {
+  const raw = env[WSLC_COMPUTERS_ENV];
+  return raw === "1" ? true : raw === "0" ? false : null;
+}
+
+export function wslcComputersEnabled(cfg: WslcConfig = {}, env: NodeJS.ProcessEnv = process.env): boolean {
+  return wslcComputersEnvValue(env) ?? cfg.localVm?.wslc === true;
 }
 
 type RuntimeName = "docker" | "podman" | "container" | "wslc";
