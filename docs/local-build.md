@@ -13,14 +13,20 @@ source and want the real packaged app, not the Vite dev server.
 once the downloads are cached). `local:install` is the one that proves the
 installer path.
 
+On Windows, `build-install.bat` in the repository root runs `local:install` and
+accepts the same options. Double-click it, or run
+`build-install.bat --no-launch` from a terminal.
+
 ## Requirements
 
 - Windows x64. macOS and Linux are not implemented yet: the macOS build needs
   an ad-hoc signed app and Linux needs root for the `.deb`.
 - Node 24 or newer (the `engines` range in `package.json`). Pass
   `--allow-unsupported-node` only if you know your Node builds this tree.
-- `corepack pnpm --version` must answer `10.33.0`, the version the checkout
-  pins. `corepack prepare pnpm@10.33.0 --activate` fixes a mismatch.
+- `pnpm --version` must answer `10.33.0`, the version the checkout pins. A
+  standalone pnpm on PATH is used when Corepack is absent, which is the case
+  from Node 25 onwards. `npm i -g pnpm@10.33.0` (or
+  `corepack prepare pnpm@10.33.0 --activate`) fixes a mismatch.
 - About 5GB free. The first build downloads roughly 400-500MB: the Electron
   binary, the packaged browser, cloudflared, Android platform tools and the CUA
   driver. Later builds reuse `dist-native/`.
@@ -68,8 +74,9 @@ itself does not raise that prompt.
 
 ## Troubleshooting
 
-- **`corepack pnpm` is not found**: run `corepack enable`, then check
-  `corepack pnpm --version` in the repository.
+- **`pnpm` is not found**: install it with `npm i -g pnpm@10.33.0`, or run
+  `corepack enable` on a Node that still bundles Corepack, then check
+  `pnpm --version` in the repository.
 - **The Electron download fails**: set `ELECTRON_MIRROR`, for example
   `https://npmmirror.com/mirrors/electron/`, and run the same command again. The
   script only downloads it when `node_modules/electron/dist` is missing.

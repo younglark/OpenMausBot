@@ -103,22 +103,50 @@ function step(title) {
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-const pnpmCommand = () => (process.platform === "win32" ? "corepack.cmd" : "corepack");
+function corepackPath() {
+  return path.join(path.dirname(process.execPath), process.platform === "win32" ? "corepack.cmd" : "corepack");
+}
+
+// Node 25 stopped bundling Corepack; a standalone pnpm on PATH runs the same
+// pinned CLI.
+function standalonePnpmPath() {
+  const result = spawnSync(process.platform === "win32" ? "where.exe" : "which", ["pnpm"], { encoding: "utf8" });
+  if (result.status !== 0) return null;
+  const candidates = String(result.stdout ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (process.platform === "win32") return candidates.find((file) => /\.(cmd|exe|bat)$/i.test(file)) ?? null;
+  return candidates[0] ?? null;
+}
+
+function pnpmLauncher() {
+  if (existsSync(corepackPath())) {
+    return {
+      command: process.platform === "win32" ? "corepack.cmd" : "corepack",
+      shimCommand: corepackPath(),
+      prefix: ["pnpm"],
+      label: "corepack pnpm",
+    };
+  }
+  const standalone = standalonePnpmPath();
+  if (!standalone) return null;
+  return { command: process.platform === "win32" ? "pnpm.cmd" : "pnpm", shimCommand: standalone, prefix: [], label: "pnpm" };
+}
 
 // package:prepare is a chain of package.json scripts (`pnpm build && pnpm
-// build:server && …`), and those inner calls run a bare `pnpm`. Corepack only
-// puts `pnpm` on PATH after `corepack enable`, which is not a step a checkout
-// can assume, so every child gets a shim directory ahead of PATH whose pnpm
-// forwards to the same corepack this script uses.
+// build:server && …`), and those inner calls run a bare `pnpm`. That name may
+// not resolve: Corepack only puts `pnpm` on PATH after `corepack enable`.
+// Every child gets a shim directory ahead of PATH whose pnpm forwards to the
+// launcher this script resolved.
 const SHIM_DIRECTORY = path.join(tmpdir(), "openmausbot-local-build", "bin");
 
 function ensurePnpmShim() {
+  const launcher = pnpmLauncher();
+  if (!launcher) return;
   mkdirSync(SHIM_DIRECTORY, { recursive: true });
-  const corepack = path.join(path.dirname(process.execPath), process.platform === "win32" ? "corepack.cmd" : "corepack");
+  const forwarded = launcher.prefix.length ? ` ${launcher.prefix.join(" ")}` : "";
   if (process.platform === "win32") {
-    writeFileSync(path.join(SHIM_DIRECTORY, "pnpm.cmd"), `@echo off\r\n"${corepack}" pnpm %*\r\n`);
+    writeFileSync(path.join(SHIM_DIRECTORY, "pnpm.cmd"), `@echo off\r\n"${launcher.shimCommand}"${forwarded} %*\r\n`);
   } else {
-    writeFileSync(path.join(SHIM_DIRECTORY, "pnpm"), `#!/bin/sh\nexec "${corepack}" pnpm "$@"\n`, { mode: 0o755 });
+    writeFileSync(path.join(SHIM_DIRECTORY, "pnpm"), `#!/bin/sh\nexec "${launcher.shimCommand}"${forwarded} "$@"\n`, { mode: 0o755 });
   }
 }
 
@@ -131,19 +159,25 @@ function childEnv() {
   return env;
 }
 
+function pnpmLabel() {
+  return pnpmLauncher()?.label ?? "pnpm";
+}
+
 function pnpm(args, { capture = false } = {}) {
-  log(`$ corepack pnpm ${args.join(" ")}`);
-  const result = spawnSync(pnpmCommand(), ["pnpm", ...args], {
+  const launcher = pnpmLauncher();
+  if (!launcher) throw new Error(`pnpm was not found; install it with npm i -g pnpm@${PNPM_VERSION}`);
+  log(`$ ${launcher.label} ${args.join(" ")}`);
+  const result = spawnSync(launcher.command, [...launcher.prefix, ...args], {
     cwd: ROOT,
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
     encoding: "utf8",
     shell: process.platform === "win32",
     env: childEnv(),
   });
-  if (result.error) throw new Error(`could not start corepack pnpm: ${result.error.message}`);
+  if (result.error) throw new Error(`could not start ${launcher.label}: ${result.error.message}`);
   if (result.status !== 0) {
     const tail = capture ? `${result.stderr ?? ""}${result.stdout ?? ""}`.trim().split(/\r?\n/).slice(-8).join("\n") : "";
-    throw new Error(`corepack pnpm ${args.join(" ")} exited with ${result.status}${tail ? `\n${tail}` : ""}`);
+    throw new Error(`${launcher.label} ${args.join(" ")} exited with ${result.status}${tail ? `\n${tail}` : ""}`);
   }
   return capture ? String(result.stdout ?? "").trim() : "";
 }
@@ -185,7 +219,7 @@ function preflight(options) {
   }
   const version = pnpm(["--version"], { capture: true });
   if (version !== PNPM_VERSION) {
-    fail(`corepack resolved pnpm ${version}; this checkout pins ${PNPM_VERSION}. Run: corepack prepare pnpm@${PNPM_VERSION} --activate`);
+    fail(`resolved pnpm ${version}; this checkout pins ${PNPM_VERSION}. Run: npm i -g pnpm@${PNPM_VERSION} (or corepack prepare pnpm@${PNPM_VERSION} --activate)`);
   }
   const free = freeBytes(ROOT);
   if (free !== null && free < MIN_FREE_BYTES) {
@@ -243,14 +277,14 @@ function build(options) {
   if (options.run) {
     // dir packaging skips NSIS compression, but still needs every extraResource
     // package:prepare stages plus the Windows CUA driver.
-    if (options.dryRun) log("$ corepack pnpm package:prepare && corepack pnpm build:cua:win && corepack pnpm exec electron-builder --win dir --x64 --publish never");
+    if (options.dryRun) log(`$ ${pnpmLabel()} package:prepare && ${pnpmLabel()} build:cua:win && ${pnpmLabel()} exec electron-builder --win dir --x64 --publish never`);
     else {
       pnpm(["package:prepare"]);
       pnpm(["build:cua:win"]);
       pnpm(["exec", "electron-builder", "--win", "dir", "--x64", "--publish", "never"]);
     }
   } else if (options.dryRun) {
-    log("$ corepack pnpm package:win");
+    log(`$ ${pnpmLabel()} package:win`);
   } else {
     pnpm(["package:win"]);
   }
