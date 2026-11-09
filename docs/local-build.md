@@ -42,7 +42,7 @@ accepts the same options. Double-click it, or run
 --keep-update              leave resources/app-update.yml pointing at the upstream feed
 --yes                      do not prompt (closes a running app without asking)
 --dry-run                  print the commands instead of running them
---dir <path>               install somewhere other than %LOCALAPPDATA%\Programs\OpenMausBot
+--dir <path>               install to <path> instead of the current per-user location
 --allow-unsupported-node   run on a Node below the engines range
 --help                     print the usage
 ```
@@ -50,9 +50,10 @@ accepts the same options. Double-click it, or run
 ## What it changes on this machine
 
 - **The installed app is replaced.** The installer is per-user and needs no
-  administrator rights, but it overwrites the copy at
-  `%LOCALAPPDATA%\Programs\OpenMausBot` (or `--dir`). There is no rollback: a
-  failed install is repaired by installing a released installer again.
+  administrator rights. It overwrites the directory already recorded for this
+  user, or `%LOCALAPPDATA%\Programs\openmausbot` when nothing is installed yet,
+  unless `--dir` says otherwise. There is no rollback: a failed install is
+  repaired by installing a released installer again.
 - **A running app is closed.** When OpenMausBot is running the script asks
   first; `--yes` skips the question for automation. The installer would close it
   anyway, first politely and then with `/F`, so anything unsaved in the app is

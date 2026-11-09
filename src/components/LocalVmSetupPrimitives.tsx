@@ -4,7 +4,6 @@ import { t } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
 import { Switch } from "./SettingsPrimitives";
 
-/** Numbered setup step. Extracted from LocalComputerSection.tsx, which is size-ratcheted. */
 export function Step({ n, title, done, children }: { n: number; title: string; done: boolean; children?: ReactNode }) {
   return (
     <div className="flex gap-3">
@@ -27,7 +26,6 @@ export function Step({ n, title, done, children }: { n: number; title: string; d
 /** A Local VM runtime action; the shared settings UI keeps the union so button and pending state agree. */
 export type LocalVmAction = "pull" | "run" | "start" | "stop" | "remove" | "recreate";
 
-/** Shared button for the Local VM runtime actions. Extracted from LocalComputerSection.tsx, which is size-ratcheted. */
 export function ActionButton({ action, pending, children, onClick, danger = false }: {
   action: LocalVmAction;
   pending: LocalVmAction | null;

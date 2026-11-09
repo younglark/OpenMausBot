@@ -37,10 +37,18 @@ export function checksFor(files) {
 
 const git = (...args) => execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
 
-// pnpm's node_modules/.bin entries are POSIX sh wrappers; on Windows only the .CMD twin runs, Node ≥ 20 (CVE-2024-27980) spawns it solely through a shell, and cmd.exe takes backslash command paths and passes pre-quoted arguments through literally.
+// Node ≥ 20 (CVE-2024-27980) runs a .CMD only through cmd.exe. /s strips one surrounding quote pair, and %name% still expands inside quotes, so each argument is quoted and a % is spliced in as ^% outside those quotes.
+export function quoteCmdArg(arg) {
+  return String(arg).split("%").map((part) => `"${part.replaceAll('"', '""').replace(/(\\+)$/, (slashes) => slashes + slashes)}"`).join("^%");
+}
+
+export function windowsCmdLine(file, args) {
+  return `"${[file, ...args].map(quoteCmdArg).join(" ")}"`;
+}
+
 const spawnBin = (command, args, options) =>
   process.platform === "win32" && command.startsWith("node_modules/.bin/")
-    ? spawnSync("cmd.exe", ["/d", "/s", "/c", [command.replaceAll("/", "\\\\") + ".CMD", ...args].join(" ")], options)
+    ? spawnSync("cmd.exe", ["/d", "/s", "/c", windowsCmdLine(`${command.replaceAll("/", "\\")}.CMD`, args)], { ...options, windowsVerbatimArguments: true })
     : spawnSync(command, args, options);
 
 /** Vitest's own verdict from its report, since a dependency out of step fails before any test runs. A guard reads the

@@ -3,7 +3,6 @@ import { t } from "@/lib/i18n";
 import { Card } from "./SettingsPrimitives";
 import { LocalVmWslcSetting } from "./LocalVmSetupPrimitives";
 
-/** Owns the config PATCH so LocalComputerSection.tsx stays under its size ratchet. */
 export function LocalVmRuntimeCard({ enabled, forced, disabled, onSaved }: {
   enabled: boolean;
   forced: boolean;

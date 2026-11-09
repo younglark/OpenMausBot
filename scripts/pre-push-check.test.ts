@@ -1,12 +1,12 @@
 import { spawnSync, execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { removeTempDir } from "../server/testing/cleanup.ts";
-import { checksFor, pushedCommits } from "./pre-push-check.mjs";
+import { checksFor, pushedCommits, quoteCmdArg, windowsCmdLine } from "./pre-push-check.mjs";
 
 const names = (files: string[]) => checksFor(files).map((check: { name: string }) => check.name);
 const guards = (files: string[]) => checksFor(files).find((check: { name: string }) => check.name === "source guards")?.guards ?? [];
@@ -38,6 +38,35 @@ describe("what a push's changed files call for", () => {
     expect(pushedCommits(`refs/heads/x ${sha} refs/heads/x ${"0".repeat(40)}\n`)).toEqual([sha]);
     expect(pushedCommits(`(delete) ${"0".repeat(40)} refs/heads/x ${sha}\n`)).toEqual([]);
     expect(pushedCommits("")).toEqual([]);
+  });
+});
+
+describe("a windows command line", () => {
+  it("quotes spaces, ampersands and percent signs", () => {
+    expect(quoteCmdArg("src/a&echo INJECTED&.ts")).toBe('"src/a&echo INJECTED&.ts"');
+    expect(quoteCmdArg("C:\\Users\\First Last\\report.json")).toBe('"C:\\Users\\First Last\\report.json"');
+    expect(quoteCmdArg("file%USERPROFILE%.ts")).toBe('"file"^%"USERPROFILE"^%".ts"');
+    expect(quoteCmdArg('say "hi"')).toBe('"say ""hi"""');
+  });
+
+  it.skipIf(process.platform !== "win32")("keeps those arguments intact when cmd.exe runs them", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omb pre-push "));
+    try {
+      const script = join(dir, "print-args.js");
+      const dump = join(dir, "argv.json");
+      writeFileSync(script, 'const fs = require("fs");\nfs.writeFileSync(process.env.DUMP, JSON.stringify(process.argv.slice(2)));\n');
+      const args = [dump, "src/a&echo INJECTED&.ts", "file%USERPROFILE%.ts"];
+      const run = spawnSync("cmd.exe", ["/d", "/s", "/c", windowsCmdLine(process.execPath, [script, ...args])], {
+        encoding: "utf8",
+        windowsVerbatimArguments: true,
+        env: { ...process.env, DUMP: dump },
+      });
+      expect(run.status).toBe(0);
+      expect(run.stdout ?? "").not.toContain("INJECTED");
+      expect(JSON.parse(readFileSync(dump, "utf8"))).toEqual(args);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

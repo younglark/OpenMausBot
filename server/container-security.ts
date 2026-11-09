@@ -1,5 +1,4 @@
 // Container isolation checks shared by Local VM and VPS computers.
-// Kept in its own module: server/container-computer.ts is size-ratcheted and must not grow.
 import { resolve } from "node:path";
 
 export const INTERNAL_VIEWER_PORT = 6901;

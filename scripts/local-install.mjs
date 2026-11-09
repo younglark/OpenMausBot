@@ -43,7 +43,7 @@ const USAGE = `Usage: node scripts/local-install.mjs [options]
   --keep-update              leave resources/app-update.yml pointing at the upstream feed
   --yes                      do not prompt (closes a running app without asking)
   --dry-run                  print the commands instead of running them
-  --dir <path>               install to <path> instead of %LOCALAPPDATA%\\Programs\\OpenMausBot
+  --dir <path>               install to <path> instead of the current per-user location
   --allow-unsupported-node   run on a Node below the engines range in package.json
   --help                     show this text`;
 
@@ -359,16 +359,67 @@ async function closeRunningApp(options) {
   if (tasklist().length > 0) fail(`could not close ${APP_EXECUTABLE}`);
 }
 
-function installedDirectory(options) {
+// electron-builder 26.15.3 writes InstallLocation to HKCU\Software\<uuid v5 of appId>,
+// namespace 50e065bc-3134-11e6-9bab-38c9862bdaf3. OneClick per-user otherwise uses
+// %LOCALAPPDATA%\Programs\<package name>.
+const ELECTRON_BUILDER_NAMESPACE = "50e065bc-3134-11e6-9bab-38c9862bdaf3";
+const APP_ID = "com.openmausbot.app";
+
+function uuidBytes(uuid) {
+  return Buffer.from(uuid.replaceAll("-", ""), "hex");
+}
+
+function appInstallGuid(appId = APP_ID) {
+  const hash = createHash("sha1").update(uuidBytes(ELECTRON_BUILDER_NAMESPACE)).update(appId, "utf8").digest();
+  const bytes = Buffer.from(hash.subarray(0, 16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function cleanInstallPath(value) {
+  let text = String(value).trim().replaceAll('"', "");
+  if (text.length > 3) text = text.replace(/[\\/]+$/, "");
+  return text || null;
+}
+
+function parseInstallLocation(text) {
+  const match = String(text).match(/^\s*InstallLocation\s+REG_\w+\s+(.*)$/m);
+  return match ? cleanInstallPath(match[1]) : null;
+}
+
+function decodeReg(buffer) {
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) return buffer.toString("utf16le");
+  if (buffer.includes(0)) return buffer.toString("utf16le");
+  return buffer.toString("utf8").replace(/^\uFEFF/, "");
+}
+
+function readInstallLocation() {
+  if (process.platform !== "win32") return null;
+  const result = spawnSync("reg.exe", ["query", `HKCU\\Software\\${appInstallGuid()}`, "/v", "InstallLocation"]);
+  if (result.status !== 0 || !result.stdout?.length) return null;
+  return parseInstallLocation(decodeReg(result.stdout));
+}
+
+function packageFolderName() {
+  return JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).name;
+}
+
+function installDirectory(options, { recorded = null, localAppData = process.env.LOCALAPPDATA ?? "", folderName = packageFolderName() } = {}) {
   if (options.dir) return options.dir;
-  const programs = path.join(process.env.LOCALAPPDATA ?? "", "Programs");
-  if (!existsSync(programs)) return null;
-  for (const entry of readdirSync(programs, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const directory = path.join(programs, entry.name);
-    if (existsSync(path.join(directory, APP_EXECUTABLE))) return directory;
-  }
-  return null;
+  if (recorded) return cleanInstallPath(recorded);
+  if (!localAppData) return null;
+  return path.win32.join(localAppData, "Programs", folderName);
+}
+
+function nsisLaunch(installer, directory) {
+  return {
+    command: installer,
+    args: directory ? ["/S", `/D=${directory}`] : ["/S"],
+    // electron-builder 26.15.3 copies the raw command line after /D=, which must be last and unquoted.
+    windowsVerbatimArguments: true,
+  };
 }
 
 function productVersion(executable) {
@@ -378,21 +429,21 @@ function productVersion(executable) {
   return String(result.stdout ?? "").replace(/^\uFEFF/, "").trim() || null;
 }
 
-function install(options, installer, version) {
+function install(installer, version, requested) {
   const done = step("install");
-  const args = ["/S"];
-  if (options.dir) args.push(`/D=${options.dir}`);
-  log(`$ ${path.basename(installer)} ${args.join(" ")}`);
-  const result = spawnSync(installer, args, { stdio: "inherit", timeout: INSTALL_TIMEOUT_MS });
+  if (!requested) fail("no install directory; set LOCALAPPDATA or pass --dir");
+  const launch = nsisLaunch(installer, requested);
+  log(`$ ${path.basename(installer)} ${launch.args.join(" ")}`);
+  const result = spawnSync(launch.command, launch.args, { stdio: "inherit", timeout: INSTALL_TIMEOUT_MS, windowsVerbatimArguments: launch.windowsVerbatimArguments });
   if (result.error?.code === "ETIMEDOUT") fail("the installer did not finish within 10 minutes");
   if (result.error) fail(`could not start the installer: ${result.error.message}`);
   if (result.status !== 0) fail(`the installer exited with ${result.status}`);
   done();
 
   const verify = step("verify install");
-  const directory = installedDirectory(options);
-  if (!directory) fail("the installer finished but no installed OpenMausBot.exe was found");
+  const directory = readInstallLocation() ?? requested;
   const executable = path.join(directory, APP_EXECUTABLE);
+  if (!existsSync(executable)) fail(`the installer finished but ${executable} was not found`);
   const found = productVersion(executable);
   log(`installed ${executable}`);
   log(`product version ${found ?? "unknown"} (expected ${version})`);
@@ -480,9 +531,10 @@ async function main() {
     }
     fail(`no *-setup.exe in release/; run without --skip-build`);
   }
+  const requested = installDirectory(options, { recorded: readInstallLocation() });
   if (options.dryRun) {
     log(`\ninstaller: ${installer}`);
-    log(`would install with /S${options.dir ? ` /D=${options.dir}` : ""}, then ${options.launch ? "start it and check /api/health" : "stop"}`);
+    log(`would install with /S${requested ? ` /D=${requested}` : ""}, then ${options.launch ? "start it and check /api/health" : "stop"}`);
     return;
   }
   await verifyInstaller(installer, version);
@@ -491,17 +543,16 @@ async function main() {
     return;
   }
 
-  const previous = installedDirectory(options);
-  if (previous) log(`\nreplacing ${previous}`);
+  if (requested && existsSync(path.join(requested, APP_EXECUTABLE))) log(`\nreplacing ${requested}`);
   await closeRunningApp(options);
 
-  const executable = install(options, installer, version);
+  const executable = install(installer, version, requested);
   if (!options.keepUpdate) disableUpdateFeed(executable);
   if (options.launch) await launch(executable);
   log(`\ninstalled ${version} at ${path.dirname(executable)}`);
 }
 
-export { parseArgs };
+export { parseArgs, appInstallGuid, parseInstallLocation, installDirectory, nsisLaunch };
 
 // Imported by scripts/local-install.test.mjs: only a direct `node
 // scripts/local-install.mjs` run should touch this machine.
