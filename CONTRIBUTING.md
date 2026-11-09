@@ -37,6 +37,7 @@ pnpm check:electron # syntax-check the plain JS Electron entrypoints
 
 pnpm package:mac   # DMG + ZIP; requires Swift/Xcode tools
 pnpm package:linux # Ubuntu x64 .deb + AppImage; no Swift required
+pnpm local:install # Windows: build this checkout and install it (docs/local-build.md)
 ```
 
 To reproduce a failing CI test job, follow [Vitest shards](docs/ci.md#vitest-shards).
